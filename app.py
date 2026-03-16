@@ -3,12 +3,28 @@ AI Trade Badger — Flask Backend
 Railway / Render compatible.
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import os, datetime, traceback
 
 app = Flask(__name__)
-CORS(app, origins="*")
+# Allow requests from local HTML files (file:// = null origin) and all web origins
+CORS(app, origins="*", allow_headers=["Content-Type", "X-Kite-Token"],
+     supports_credentials=False)
+
+@app.after_request
+def add_cors(response):
+    # file:// pages send Origin: null — must explicitly allow it
+    origin = request.headers.get("Origin", "")
+    response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Kite-Token"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
+@app.route("/<path:path>", methods=["OPTIONS"])
+def handle_options(path):
+    return "", 204
 
 # ── Lazy Kite import ──────────────────────────────────────────────────────────
 try:
@@ -47,12 +63,6 @@ def err(msg, code=500):
 # ── Health / Index ────────────────────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
-    """Serve the frontend HTML app."""
-    return send_from_directory(".", "AITradeBadger.html")
-
-@app.route("/status", methods=["GET"])
-def status():
-    """API status — replaces old index JSON."""
     cfg = get_cfg()
     return jsonify({
         "app": "AI Trade Badger",
