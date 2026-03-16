@@ -1,7 +1,7 @@
 """
 AI Trade Badger — Flask Backend v2
 """
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import os, datetime, traceback
 
@@ -48,6 +48,10 @@ def health():
 
 @app.route("/")
 def index():
+    return send_from_directory(".", "AITradeBadger.html")
+
+@app.route("/api/status")
+def api_status():
     return jsonify({
         "app": "AI Trade Badger",
         "status": "online",
