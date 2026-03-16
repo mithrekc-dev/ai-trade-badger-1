@@ -3,7 +3,7 @@ AI Trade Badger — Flask Backend
 Railway / Render compatible.
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import os, datetime, traceback
 
@@ -47,11 +47,17 @@ def err(msg, code=500):
 # ── Health / Index ────────────────────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
+    """Serve the frontend HTML app."""
+    return send_from_directory(".", "AITradeBadger.html")
+
+@app.route("/status", methods=["GET"])
+def status():
+    """API status — replaces old index JSON."""
     cfg = get_cfg()
     return jsonify({
         "app": "AI Trade Badger",
         "status": "online",
-        "version": "1.0",
+        "version": "2.0",
         "kite_available": KITE_AVAILABLE,
         "api_key_set": bool(cfg["api_key"]),
         "token_set": bool(cfg["access_token"]),
