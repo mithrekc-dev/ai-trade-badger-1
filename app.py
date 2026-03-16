@@ -21,10 +21,7 @@ def add_cors(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
-@app.route("/", defaults={"path": ""}, methods=["OPTIONS"])
-@app.route("/<path:path>", methods=["OPTIONS"])
-def handle_options(path):
-    return "", 204
+
 
 # ── Lazy Kite import ──────────────────────────────────────────────────────────
 try:
