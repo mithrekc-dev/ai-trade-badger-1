@@ -361,12 +361,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"AI Trade Badger backend starting on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
-port = int(os.environ.get("PORT", 5000))
-app.run(host="0.0.0.0", port=port, debug=False)
-```
-
-The `app.run()` line only runs when executing directly with `python app.py` — gunicorn ignores it. So the port 8080 must be coming from somewhere else.
-
-**Fastest fix right now** — in Railway → Variables, add:
-```
-PORT = 8080
