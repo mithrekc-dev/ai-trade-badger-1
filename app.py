@@ -1,5 +1,5 @@
 """
-AI Trade Badger — Flask Backend v2
+AI Trade Badger - Flask Backend (v12 — OI Scanner integrated)
 """
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -16,7 +16,6 @@ def cors_fix(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
-# Lazy kite import
 KiteConnect = None
 KITE_AVAILABLE = False
 try:
@@ -25,6 +24,13 @@ try:
     KITE_AVAILABLE = True
 except Exception:
     pass
+
+# ── OI Scanner (optional — app still boots if file is missing) ──
+try:
+    from oi_scanner import build_oi_scan_response
+    OI_SCANNER_AVAILABLE = True
+except ImportError:
+    OI_SCANNER_AVAILABLE = False
 
 def get_kite():
     if not KITE_AVAILABLE:
@@ -42,22 +48,25 @@ def get_kite():
 def err(msg, code=500):
     return jsonify({"error": str(msg)}), code
 
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok", "ts": datetime.datetime.utcnow().isoformat()})
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "AITradeBadger.html")
+    html_path = os.path.join(BASE_DIR, "AITradeBadger_v12.html")
+    if os.path.exists(html_path):
+        return send_from_directory(BASE_DIR, "AITradeBadger_v12.html")
+    # fallback to v11
+    v11 = os.path.join(BASE_DIR, "AITradeBadger_v11.html")
+    if os.path.exists(v11):
+        return send_from_directory(BASE_DIR, "AITradeBadger_v11.html")
+    return jsonify({"app": "AI Trade Badger", "status": "online", "note": "HTML not found"})
 
-@app.route("/api/status")
-def api_status():
+@app.route("/health")
+def health():
     return jsonify({
-        "app": "AI Trade Badger",
-        "status": "online",
-        "kite_available": KITE_AVAILABLE,
-        "api_key_set": bool(os.environ.get("KITE_API_KEY")),
-        "token_set": bool(os.environ.get("KITE_ACCESS_TOKEN")),
+        "status": "ok",
+        "ts": datetime.datetime.utcnow().isoformat(),
+        "oi_scanner": OI_SCANNER_AVAILABLE,
     })
 
 @app.route("/session")
@@ -126,22 +135,22 @@ def option_chain():
         today = str(datetime.date.today())
         chain = [i for i in insts if i["name"] == symbol]
         if not chain:
-            return err(f"No NFO instruments for {symbol}", 404)
+            return err("No NFO instruments for " + symbol, 404)
         if not expiry:
             expiries = sorted(set(str(i["expiry"]) for i in chain if str(i["expiry"]) >= today))
             expiry = expiries[0] if expiries else None
         if expiry:
             chain = [i for i in chain if str(i["expiry"]) == expiry]
-        tokens = [f"NFO:{i['tradingsymbol']}" for i in chain[:200]]
+        tokens = ["NFO:" + i["tradingsymbol"] for i in chain[:200]]
         quotes_data = {}
         for i in range(0, len(tokens), 500):
             try:
                 quotes_data.update(k.quote(tokens[i:i+500]))
             except Exception as qe:
-                print(f"Quote batch error: {qe}")
+                print("Quote batch error: " + str(qe))
         calls, puts = [], []
         for inst in chain:
-            ts = f"NFO:{inst['tradingsymbol']}"
+            ts = "NFO:" + inst["tradingsymbol"]
             q = quotes_data.get(ts, {})
             entry = {
                 "tradingsymbol": inst["tradingsymbol"],
@@ -151,6 +160,7 @@ def option_chain():
                 "lot_size": inst["lot_size"],
                 "ltp": q.get("last_price", 0),
                 "oi": q.get("oi", 0),
+                "oi_day_change": q.get("oi_day_change", 0),
                 "volume": q.get("volume", 0),
             }
             if inst["instrument_type"] == "CE":
@@ -161,19 +171,22 @@ def option_chain():
         total_put_oi = sum(p["oi"] for p in puts)
         pcr = round(total_put_oi / total_call_oi, 3)
         SPOT_MAP = {
-            "NIFTY": "NSE:NIFTY 50", "BANKNIFTY": "NSE:NIFTY BANK",
-            "FINNIFTY": "NSE:NIFTY FIN SERVICE", "MIDCPNIFTY": "NSE:NIFTY MIDCAP SELECT",
+            "NIFTY": "NSE:NIFTY 50",
+            "BANKNIFTY": "NSE:NIFTY BANK",
+            "FINNIFTY": "NSE:NIFTY FIN SERVICE",
+            "MIDCPNIFTY": "NSE:NIFTY MIDCAP SELECT",
         }
         spot = 0
         try:
-            spot_sym = SPOT_MAP.get(symbol, f"NSE:{symbol}")
+            spot_sym = SPOT_MAP.get(symbol, "NSE:" + symbol)
             sq = k.quote([spot_sym])
             spot = sq[spot_sym]["last_price"]
         except Exception as se:
-            print(f"Spot error {symbol}: {se}")
+            print("Spot error: " + str(se))
         return jsonify({
             "symbol": symbol, "expiry": expiry, "spot": spot,
-            "pcr": pcr, "calls": sorted(calls, key=lambda x: x["strike"]),
+            "pcr": pcr,
+            "calls": sorted(calls, key=lambda x: x["strike"]),
             "puts": sorted(puts, key=lambda x: x["strike"]),
         })
     except Exception as e:
@@ -190,29 +203,29 @@ def mcx_option_chain():
         today = str(datetime.date.today())
         options = [i for i in insts if i["name"] == symbol and i["instrument_type"] in ("CE", "PE")]
         if not options:
-            return err(f"No MCX options for {symbol}", 404)
+            return err("No MCX options for " + symbol, 404)
         expiries = sorted(set(str(i["expiry"]) for i in options if str(i["expiry"]) >= today))
         nearest = expiries[0] if expiries else None
         if nearest:
             options = [i for i in options if str(i["expiry"]) == nearest]
-        tokens = [f"MCX:{i['tradingsymbol']}" for i in options[:200]]
+        tokens = ["MCX:" + i["tradingsymbol"] for i in options[:200]]
         quotes_data = {}
         for i in range(0, len(tokens), 500):
             try:
                 quotes_data.update(k.quote(tokens[i:i+500]))
             except Exception as qe:
-                print(f"MCX quote error: {qe}")
+                print("MCX quote error: " + str(qe))
         fut = sorted([i for i in insts if i["name"] == symbol and i["instrument_type"] == "FUT"], key=lambda x: x["expiry"])
         spot = 0
         if fut:
             try:
-                sq = k.quote([f"MCX:{fut[0]['tradingsymbol']}"])
-                spot = sq[f"MCX:{fut[0]['tradingsymbol']}"]["last_price"]
+                sq = k.quote(["MCX:" + fut[0]["tradingsymbol"]])
+                spot = sq["MCX:" + fut[0]["tradingsymbol"]]["last_price"]
             except Exception as se:
-                print(f"MCX spot error: {se}")
+                print("MCX spot error: " + str(se))
         calls, puts = [], []
         for inst in options:
-            ts = f"MCX:{inst['tradingsymbol']}"
+            ts = "MCX:" + inst["tradingsymbol"]
             q = quotes_data.get(ts, {})
             entry = {
                 "tradingsymbol": inst["tradingsymbol"],
@@ -222,6 +235,7 @@ def mcx_option_chain():
                 "lot_size": inst["lot_size"],
                 "ltp": q.get("last_price", 0),
                 "oi": q.get("oi", 0),
+                "oi_day_change": q.get("oi_day_change", 0),
                 "volume": q.get("volume", 0),
             }
             if inst["instrument_type"] == "CE":
@@ -233,9 +247,23 @@ def mcx_option_chain():
         pcr = round(total_put_oi / total_call_oi, 3)
         return jsonify({
             "symbol": symbol, "spot": spot, "expiry": nearest,
-            "pcr": pcr, "calls": sorted(calls, key=lambda x: x["strike"]),
+            "pcr": pcr,
+            "calls": sorted(calls, key=lambda x: x["strike"]),
             "puts": sorted(puts, key=lambda x: x["strike"]),
         })
+    except Exception as e:
+        traceback.print_exc()
+        return err(e)
+
+# ── NEW: OI Scanner endpoint ────────────────────────────────────
+@app.route("/api/oi-scan", methods=["GET"])
+def oi_scan():
+    if not OI_SCANNER_AVAILABLE:
+        return err("oi_scanner.py not found — add it to the repo root", 503)
+    try:
+        k = get_kite()
+        instruments = request.args.getlist("instruments") or None
+        return jsonify(build_oi_scan_response(k, instruments))
     except Exception as e:
         traceback.print_exc()
         return err(e)
@@ -259,8 +287,8 @@ def generate_token():
         return err("request_token required", 400)
     try:
         k = KiteConnect(api_key=os.environ.get("KITE_API_KEY", ""))
-        session = k.generate_session(request_token, api_secret=os.environ.get("KITE_API_SECRET", ""))
-        return jsonify({"access_token": session["access_token"], "user": session.get("user_name", "")})
+        sess = k.generate_session(request_token, api_secret=os.environ.get("KITE_API_SECRET", ""))
+        return jsonify({"access_token": sess["access_token"], "user": sess.get("user_name", "")})
     except Exception as e:
         return err(e)
 
